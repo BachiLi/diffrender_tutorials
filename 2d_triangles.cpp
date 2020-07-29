@@ -10,7 +10,7 @@ using Real = float;
 
 uniform_real_distribution<Real> uni_dist(0, 1);
 
-// Some basic vector operations
+// some basic vector operations
 template <typename T>
 struct Vec2 {
     T x, y;
@@ -48,10 +48,11 @@ T clamp(T v, T l, T u) {
     return v;
 }
 
+// data structures for rendering
 struct TriangleMesh {
     vector<Vec2f> vertices;
     vector<Vec3i> indices;
-    vector<Vec3f> colors;
+    vector<Vec3f> colors; // defined for each face
 };
 
 struct DTriangleMesh {
@@ -65,19 +66,33 @@ struct DTriangleMesh {
 };
 
 struct Edge {
-    int v0, v1;
+    int v0, v1; // vertex ID, v0 < v1
 
     Edge(int v0, int v1) : v0(min(v0, v1)), v1(max(v0, v1)) {}
 
+    // for sorting edges
     bool operator<(const Edge &e) const {
         return this->v0 != e.v0 ? this->v0 < e.v0 : this->v1 < e.v1;
     }
 };
 
+// for sampling edges with inverse transform sampling
 struct Sampler {
     vector<Real> pmf, cdf;
 };
 
+struct Img {
+    Img(int width, int height, const Vec3f &val = Vec3f{0, 0, 0}) :
+            width(width), height(height) {
+        color.resize(width * height, val);
+    }
+
+    vector<Vec3f> color;
+    int width;
+    int height;
+};
+
+// build a discrete CDF using edge length
 Sampler build_edge_sampler(const TriangleMesh &mesh,
                            const vector<Edge> &edges) {
     vector<Real> pmf;
@@ -97,11 +112,12 @@ Sampler build_edge_sampler(const TriangleMesh &mesh,
     return Sampler{pmf, cdf};
 }
 
-// Binary search to invert the CDF in the sampler
+// binary search to invert the CDF in the sampler
 int sample(const Sampler &sampler, const Real u) {
+    auto cdf = sampler.cdf;
     return clamp<int>(upper_bound(
-        sampler.cdf.begin(), sampler.cdf.end(), u) - sampler.cdf.begin() - 1,
-        0, sampler.cdf.size() - 2);
+        cdf.begin(), cdf.end(), u) - cdf.begin() - 1,
+        0, cdf.size() - 2);
 }
 
 // Given a triangle mesh, collect all edges.
@@ -115,17 +131,6 @@ vector<Edge> collect_edges(const TriangleMesh &mesh) {
     return vector<Edge>(edges.begin(), edges.end());
 }
 
-struct Img {
-    Img(int width, int height, const Vec3f &val = Vec3f{0, 0, 0}) :
-            width(width), height(height) {
-        color.resize(width * height, val);
-    }
-
-    vector<Vec3f> color;
-    int width;
-    int height;
-};
-
 void save_img(const Img &img, const string &filename, bool flip = false) {
     fstream fs(filename.c_str(), fstream::out);
     fs << "P3" << endl << img.width << " " << img.height << " 255" << endl;
@@ -137,22 +142,18 @@ void save_img(const Img &img, const string &filename, bool flip = false) {
     }
 }
 
-// Trace a single ray at screen_pos, intersect with the triangle mesh.
+// trace a single ray at screen_pos, intersect with the triangle mesh.
 Vec3f raytrace(const TriangleMesh &mesh,
                const Vec2f &screen_pos,
                int *hit_index = nullptr) {
-    // Loop over all triangles in a mesh, return the first one that hits
+    // loop over all triangles in a mesh, return the first one that hits
     for (int i = 0; i < (int)mesh.indices.size(); i++) {
-        // Retrieve the three vertices of a triangle
+        // retrieve the three vertices of a triangle
         auto index = mesh.indices[i];
-        auto v0 = mesh.vertices[index.x];
-        auto v1 = mesh.vertices[index.y];
-        auto v2 = mesh.vertices[index.z];
-        // Form three half-planes: v1-v0, v2-v1, v0-v2
-        // If a point is on the same side of all three half-planes, it's inside the triangle.
-        auto n01 = normal(v1 - v0);
-        auto n12 = normal(v2 - v1);
-        auto n20 = normal(v0 - v2);
+        auto v0 = mesh.vertices[index.x], v1 = mesh.vertices[index.y], v2 = mesh.vertices[index.z];
+        // form three half-planes: v1-v0, v2-v1, v0-v2
+        // if a point is on the same side of all three half-planes, it's inside the triangle.
+        auto n01 = normal(v1 - v0), n12 = normal(v2 - v1), n20 = normal(v0 - v2);
         auto side01 = dot(screen_pos - v0, n01) > 0;
         auto side12 = dot(screen_pos - v1, n12) > 0;
         auto side20 = dot(screen_pos - v2, n20) > 0;
@@ -163,6 +164,7 @@ Vec3f raytrace(const TriangleMesh &mesh,
             return mesh.colors[i];
         }
     }
+    // return background
     if (hit_index != nullptr) {
         *hit_index = -1;
     }
@@ -175,9 +177,9 @@ void render(const TriangleMesh &mesh,
             Img &img) {
     auto sqrt_num_samples = (int)sqrt((Real)samples_per_pixel);
     samples_per_pixel = sqrt_num_samples * sqrt_num_samples;
-    for (int y = 0; y < img.height; y++) {
+    for (int y = 0; y < img.height; y++) { // for each pixel
         for (int x = 0; x < img.width; x++) {
-            for (int dy = 0; dy < sqrt_num_samples; dy++) {
+            for (int dy = 0; dy < sqrt_num_samples; dy++) { // for each subpixel
                 for (int dx = 0; dx < sqrt_num_samples; dx++) {
                     auto xoff = (dx + uni_dist(rng)) / sqrt_num_samples;
                     auto yoff = (dy + uni_dist(rng)) / sqrt_num_samples;
@@ -197,9 +199,9 @@ void compute_interior_derivatives(const TriangleMesh &mesh,
                                   vector<Vec3f> &d_colors) {
     auto sqrt_num_samples = (int)sqrt((Real)samples_per_pixel);
     samples_per_pixel = sqrt_num_samples * sqrt_num_samples;
-    for (int y = 0; y < adjoint.height; y++) {
+    for (int y = 0; y < adjoint.height; y++) { // for each pixel
         for (int x = 0; x < adjoint.width; x++) {
-            for (int dy = 0; dy < sqrt_num_samples; dy++) {
+            for (int dy = 0; dy < sqrt_num_samples; dy++) { // for each subpixel
                 for (int dx = 0; dx < sqrt_num_samples; dx++) {
                     auto xoff = (dx + uni_dist(rng)) / sqrt_num_samples;
                     auto yoff = (dy + uni_dist(rng)) / sqrt_num_samples;
@@ -207,6 +209,7 @@ void compute_interior_derivatives(const TriangleMesh &mesh,
                     int hit_index = -1;
                     raytrace(mesh, screen_pos, &hit_index);
                     if (hit_index != -1) {
+                        // if running in parallel, use atomic add here.
                         d_colors[hit_index] += 
                             adjoint.color[y * adjoint.width + x] / samples_per_pixel;
                     }
@@ -227,11 +230,11 @@ void compute_edge_derivatives(
         Img &screen_dy,
         vector<Vec2f> &d_vertices) {
     for (int i = 0; i < num_edge_samples; i++) {
-        // Pick an edge
+        // pick an edge
         auto edge_id = sample(edge_sampler, uni_dist(rng));
         auto edge = edges[edge_id];
         auto pmf = edge_sampler.pmf[edge_id];
-        // Pick a point p on the edge
+        // pick a point p on the edge
         auto v0 = mesh.vertices[edge.v0];
         auto v1 = mesh.vertices[edge.v1];
         auto t = uni_dist(rng);
@@ -240,26 +243,28 @@ void compute_edge_derivatives(
         if (xi < 0 || yi < 0 || xi >= adjoint.width || yi >= adjoint.height) {
             continue;
         }
-        // Sample the two sides of the edge
+        // sample the two sides of the edge
         auto n = normal((v1 - v0) / length(v1 - v0));
         auto color_in = raytrace(mesh, p - 1e-3f * n);
         auto color_out = raytrace(mesh, p + 1e-3f * n);
-        // Get corresponding adjoint from the adjoint image,
+        // get corresponding adjoint from the adjoint image,
         // multiply with the color difference and divide by the pdf & number of samples.
-        auto weight = Real(length(v1 - v0) / (pmf * Real(num_edge_samples)));
-        auto adj = dot(color_in - color_out, adjoint.color[yi * adjoint.width + xi]) * weight;
-        // Reynolds transport theorem:
-        // The boundary point is p = v0 + t * (v1 - v0)
-        // The derivatives w.r.t. q is color_diff * dot(n, dp/dq)
-        // For v0, dp/dv0.x = (1 - t, 0), dp/dv0.y = (0, 1 - t)
-        // For v1, dp/dv1.x = (t, 0), dp/dv1.y = (0, t)
-        auto d_v0 = Vec2f{(1 - t) * n.x, (1 - t) * n.y} * adj;
-        auto d_v1 = Vec2f{     t  * n.x,      t  * n.y} * adj;
-        // For the derivatives w.r.t. p, dp/dp.x = (1, 0) and dp/dp.y = (0, 1)
-        // The screen space derivatives are the negation of this
+        auto pdf = pmf / (length(v1 - v0));
+        auto weight = Real(1 / (pdf * Real(num_edge_samples)));
+        auto adj = dot(color_in - color_out, adjoint.color[yi * adjoint.width + xi]);
+        // the boundary point is p = v0 + t * (v1 - v0)
+        // according to Reynolds transport theorem,
+        // the derivatives w.r.t. q is color_diff * dot(n, dp/dq)
+        // dp/dv0.x = (1 - t, 0), dp/dv0.y = (0, 1 - t)
+        // dp/dv1.x = (    t, 0), dp/dv1.y = (0,     t)
+        auto d_v0 = Vec2f{(1 - t) * n.x, (1 - t) * n.y} * adj * weight;
+        auto d_v1 = Vec2f{     t  * n.x,      t  * n.y} * adj * weight;
+        // for the derivatives w.r.t. p, dp/dp.x = (1, 0) and dp/dp.y = (0, 1)
+        // the screen space derivatives are the negation of this
         auto dx = -n.x * (color_in - color_out) * weight;
         auto dy = -n.y * (color_in - color_out) * weight;
-        // In the parallel case, use atomic add here.
+        // scatter gradients to buffers
+        // in the parallel case, use atomic add here.
         screen_dx.color[yi * adjoint.width + xi] += dx;
         screen_dy.color[yi * adjoint.width + xi] += dy;
         d_vertices[edge.v0] += d_v0;
@@ -283,11 +288,13 @@ void d_render(const TriangleMesh &mesh,
 }
 
 int main(int argc, char *argv[]) {
-    // Let's define two 2D triangles as a single triangle mesh
     TriangleMesh mesh{
+        // vertices
         {{50.0, 25.0}, {200.0, 200.0}, {15.0, 150.0},
          {200.0, 15.0}, {150.0, 250.0}, {50.0, 100.0}},
+        // indices
         {{0, 1, 2}, {3, 4, 5}},
+        // color
         {{0.3, 0.5, 0.3}, {0.3, 0.3, 0.5}}
     };
     Img img(256, 256);

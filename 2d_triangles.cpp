@@ -1,5 +1,4 @@
 // Compile: g++ -O3 -std=c++11 2d_triangles.cpp
-#include <iostream>
 #include <fstream>
 #include <random>
 #include <set>
@@ -112,7 +111,7 @@ Sampler build_edge_sampler(const TriangleMesh &mesh,
     return Sampler{pmf, cdf};
 }
 
-// binary search to invert the CDF in the sampler
+// binary search for inverting the CDF in the sampler
 int sample(const Sampler &sampler, const Real u) {
     auto cdf = sampler.cdf;
     return clamp<int>(upper_bound(
@@ -120,7 +119,7 @@ int sample(const Sampler &sampler, const Real u) {
         0, cdf.size() - 2);
 }
 
-// Given a triangle mesh, collect all edges.
+// given a triangle mesh, collect all edges.
 vector<Edge> collect_edges(const TriangleMesh &mesh) {
     set<Edge> edges;
     for (auto index : mesh.indices) {

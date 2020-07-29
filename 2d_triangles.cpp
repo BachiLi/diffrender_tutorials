@@ -1,4 +1,4 @@
-// Compile: g++ -O3 -std=c++11 2d_triangle.cpp
+// Compile: g++ -O3 -std=c++11 2d_triangles.cpp
 #include <iostream>
 #include <fstream>
 #include <random>
